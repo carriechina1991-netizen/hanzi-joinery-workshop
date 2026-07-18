@@ -79,16 +79,19 @@ function loadQuestions() {
 
 const QUESTIONS = loadQuestions();
 const ROUND_SIZE = 6;
-const WRONG_ANSWER_PENALTY = 5;
-const MINIMUM_QUESTION_SCORE = 60;
 
 const app = document.getElementById("app");
 const soundButton = document.getElementById("soundButton");
-const state = {screen:"home",order:[],round:0,parts:[],placed:{},selected:null,mistakes:0,questionMistakes:0,partMistakes:{},score:0,sound:true,completed:false,feedback:"",drag:null};
-const labels = {left:"left slot",right:"right slot",top:"top slot",middle:"middle slot",bottom:"bottom slot"};
+const state = {screen:"home",order:[],round:0,parts:[],placed:{},selected:null,mistakes:0,correct:0,score:0,lastPoints:0,sound:true,answered:false,completed:false,outcome:"",feedback:"",drag:null};
 const shuffle = items => [...items].sort(() => Math.random() - .5);
 const question = () => QUESTIONS[state.order[state.round] ?? 0];
 const componentClass = text => Array.from(text).length > 1 ? "compact-component" : "";
+
+function shuffleParts(item) {
+  const shuffled = shuffle(item.parts);
+  const matchesCorrectOrder = item.slots.every((slot, index) => shuffled[index]?.target === slot.id);
+  return matchesCorrectOrder ? [...shuffled.slice(1), shuffled[0]] : shuffled;
+}
 
 function chooseRoundQuestions() {
   const allIndexes = QUESTIONS.map((_, index) => index);
@@ -124,12 +127,12 @@ function startGame() {
     return;
   }
   state.order = chooseRoundQuestions();
-  state.round = 0; state.mistakes = 0; state.score = 0;
+  state.round = 0; state.mistakes = 0; state.correct = 0; state.score = 0;
   loadQuestion(); state.screen = "game"; render();
 }
 function loadQuestion() {
-  state.parts = shuffle(question().parts);
-  state.placed = {}; state.selected = null; state.questionMistakes = 0; state.partMistakes = {}; state.completed = false; state.feedback = "";
+  state.parts = shuffleParts(question());
+  state.placed = {}; state.selected = null; state.lastPoints = 0; state.answered = false; state.completed = false; state.outcome = ""; state.feedback = "";
 }
 function nextQuestion() {
   if (state.round === state.order.length - 1) setScreen("result");
@@ -141,27 +144,48 @@ function feedback(text) {
   if (element) { element.textContent = text; element.classList.add("visible"); }
 }
 function tryPlace(partId, slot) {
-  if (state.completed || state.placed[partId]) return;
+  if (state.answered || state.placed[partId]) return;
   const part = question().parts.find(item => item.id === partId);
-  if (!part || part.target !== slot) {
-    state.mistakes++; state.questionMistakes++;
-    state.partMistakes[partId] = (state.partMistakes[partId] || 0) + 1;
-    const block = [...document.querySelectorAll(".part-block")].find(item => item.dataset.part === partId);
-    if (block) { block.classList.add("wrong"); setTimeout(() => block.classList.remove("wrong"), 350); }
-    const message = state.partMistakes[partId] === 1
-      ? `Not quite. Look at the structure again. −${WRONG_ANSWER_PENALTY} points.`
-      : `Hint: this component belongs in the ${labels[part.target]}. −${WRONG_ANSWER_PENALTY} points.`;
-    feedback(message);
+  if (!part) return;
+  const slotIsFilled = Object.entries(state.placed).some(([placedPartId, placedSlot]) => placedPartId !== partId && placedSlot === slot);
+  if (slotIsFilled) {
+    feedback("That slot already has a component. Choose another slot.");
     return;
   }
   state.placed[partId] = slot; state.selected = null; clickSound();
   if (navigator.vibrate) navigator.vibrate(20);
-  render();
-  feedback("Click! That connection is correct.");
   if (Object.keys(state.placed).length === question().parts.length) {
-    const earned = Math.max(MINIMUM_QUESTION_SCORE, 100 - state.questionMistakes * WRONG_ANSWER_PENALTY);
-    state.score += earned;
-    setTimeout(() => { state.completed = true; render(); }, 300);
+    const answerIsCorrect = question().parts.every(item => state.placed[item.id] === item.target);
+    state.answered = true;
+    state.outcome = answerIsCorrect ? "correct" : "wrong";
+    if (answerIsCorrect) {
+      const previousScore = state.score;
+      state.correct++;
+      state.score = Math.round(state.correct * 100 / ROUND_SIZE);
+      state.lastPoints = state.score - previousScore;
+      state.feedback = "Click! Every component is in the correct position.";
+      render();
+      setTimeout(() => {
+        if (state.screen === "game" && state.outcome === "correct") {
+          state.completed = true;
+          render();
+        }
+      }, 300);
+    } else {
+      state.mistakes++;
+      state.feedback = "Not quite — the completed character does not fit.";
+      render();
+    }
+  } else {
+    render();
+    feedback("Component placed. Complete the character to check your answer.");
+  }
+}
+
+function revealCorrectAnswer() {
+  if (state.answered && state.outcome === "wrong") {
+    state.completed = true;
+    render();
   }
 }
 
@@ -189,14 +213,14 @@ function render() {
         <span class="offline-note">Works offline — no internet needed</span>
       </div>
       <div class="hero-workbench" aria-hidden="true">
-        <div class="wood-board"><span class="wood-label">TODAY'S PRACTICE</span><div class="demo-character"><span>亻</span><b>+</b><span>木</span></div><div class="demo-arrow">→</div><div class="demo-result">休</div><div class="wood-pegs"><i></i><i></i><i></i></div></div>
+        <div class="wood-board"><span class="wood-label"><span class="practice-word"><i>T</i><i>O</i><i>D</i><i>A</i><i>Y</i><i>'</i><i>S</i></span><span class="practice-word"><i>P</i><i>R</i><i>A</i><i>C</i><i>T</i><i>I</i><i>C</i><i>E</i></span></span><div class="demo-character"><span>亻</span><b>+</b><span>木</span></div><div class="demo-arrow">→</div><div class="demo-result">休</div><div class="wood-pegs"><i></i><i></i><i></i></div></div>
         <img class="home-plant-art" src="assets/illustrations/plant.png" alt="">
         <img class="home-tools-art" src="assets/illustrations/wood-tools.png" alt="">
       </div>
     </section>`;
   else if (state.screen === "howto") app.innerHTML = `
     <section class="screen howto-screen"><img class="guide-plant-art" src="assets/illustrations/plant.png" alt=""><img class="guide-tools-art" src="assets/illustrations/wood-tools.png" alt=""><div class="section-heading"><p class="eyebrow">APPRENTICE GUIDE</p><h2>Build in three steps</h2><p>Look at the position first, then fit the pieces together.</p></div>
-    <div class="steps"><article><span>01</span><div class="step-icon">1</div><h3>Read the clue</h3><p>Read the pinyin and English meaning. Think about which character it could be.</p></article><article><span>02</span><div class="step-icon">2</div><h3>Move a component</h3><p>Drag a wooden block toward a slot, or tap the block and then tap a slot.</p></article><article><span>03</span><div class="step-icon">3</div><h3>Listen for the click</h3><p>A correct piece snaps into place. A wrong piece returns to the tray.</p></article></div>
+    <div class="steps"><article><span>01</span><div class="step-icon">1</div><h3>Read the clue</h3><p>Read the pinyin and English meaning. Think about which character it could be.</p></article><article><span>02</span><div class="step-icon">2</div><h3>Place every component</h3><p>Drag each wooden block into an empty slot, or tap the block and then tap a slot.</p></article><article><span>03</span><div class="step-icon">3</div><h3>Check the whole character</h3><p>After every slot is filled, a wrong character cracks. Tap the button to study the correct answer.</p></article></div>
     <div class="howto-actions"><button class="primary-button" id="start">Got It — Start <span>→</span></button><button class="text-button" id="back">Return Home</button></div></section>`;
   else if (state.screen === "game") renderGame();
   else renderResult();
@@ -205,24 +229,24 @@ function render() {
 
 function renderGame() {
   const q = question();
-  const questionScore = Math.max(MINIMUM_QUESTION_SCORE, 100 - state.questionMistakes * WRONG_ANSWER_PENALTY);
+  const correctAnswer = q.slots.map(slot => q.parts.find(part => part.target === slot.id)).filter(Boolean);
   app.innerHTML = `<section class="game-screen">
     <img class="game-plant-art" src="assets/illustrations/plant.png" alt="">
     <img class="game-tools-art" src="assets/illustrations/wood-tools.png" alt="">
-    <div class="game-meta"><div><span>Progress</span><strong>${state.round + 1} / ${state.order.length}</strong></div><div class="progress-track"><i style="width:${((state.round + (state.completed ? 1 : 0))/state.order.length)*100}%"></i></div><span class="score-pill">Score ${state.score}</span></div>
+    <div class="game-meta"><div><span>Progress</span><strong>${state.round + 1} / ${state.order.length}</strong></div><div class="progress-track"><i style="width:${((state.round + (state.answered ? 1 : 0))/state.order.length)*100}%"></i></div><span class="score-pill">Score ${state.score} / 100</span></div>
     <div class="prompt-card"><p>Build the character for this clue</p><div class="prompt-main"><strong>${q.pinyin}</strong><span>${q.english}</span></div><span class="structure-tag">${q.structure === "left-right" ? "Left–right" : q.structure === "top-middle-bottom" ? "Three-part vertical" : "Top–bottom"}</span></div>
-    <div class="work-area"><div class="bench-title"><span>JOINERY WORKBENCH</span><i></i></div><div class="slot-frame ${q.structure}">
-      ${q.slots.map(slot => { const part=q.parts.find(item=>item.target===slot.id); const filled=part&&state.placed[part.id]===slot.id; return `<button class="joinery-slot ${filled?"filled":""}" data-slot="${slot.id}" aria-label="${slot.label} slot">${filled?`<span class="${componentClass(part.text)}">${part.text}</span>`:`<i>＋</i><small>${slot.label}</small>`}</button>`; }).join("")}
-    </div><p class="feedback ${state.feedback?"visible":""}" id="feedback" aria-live="polite">${state.feedback || "Choose a component to begin."}</p></div>
-    <div class="parts-tray"><div class="tray-label">Components <span>Drag or tap a wooden block</span></div><div class="parts-row">
-      ${state.parts.map(part => `<button class="part-block ${state.selected===part.id?"selected":""} ${state.placed[part.id]?"placed":""}" data-part="${part.id}" ${state.placed[part.id]?"disabled":""}><span class="${componentClass(part.text)}">${part.text}</span><small>PART</small></button>`).join("")}
+    <div class="work-area ${state.outcome === "wrong" && !state.completed ? "showing-error" : ""}"><div class="bench-title"><span>JOINERY WORKBENCH</span><i></i></div><div class="slot-frame ${q.structure} ${state.outcome === "wrong" && !state.completed ? "cracking" : ""} ${state.outcome === "correct" ? "joined" : ""}">
+      ${q.slots.map(slot => { const part=q.parts.find(item=>state.placed[item.id]===slot.id); const filled=Boolean(part); const wrong=filled&&state.outcome==="wrong"&&part.target!==slot.id; return `<button class="joinery-slot ${filled?"filled":""} ${wrong?"wrong-filled":""}" data-slot="${slot.id}" aria-label="${slot.label} slot" ${state.answered?"disabled":""}>${filled?`<span class="${componentClass(part.text)}">${part.text}</span>`:`<i>＋</i><small>${slot.label}</small>`}</button>`; }).join("")}
+    </div><p class="feedback ${state.feedback?"visible":""}" id="feedback" aria-live="polite">${state.feedback || "Choose a component to begin."}</p>${state.outcome==="wrong"&&!state.completed?`<button class="view-answer-button" id="showAnswer">View Correct Character <span>→</span></button>`:""}</div>
+    <div class="parts-tray ${state.answered?"locked":""}"><div class="tray-label">Components <span>${state.answered?"Question complete":"Drag or tap a wooden block"}</span></div><div class="parts-row">
+      ${state.parts.map(part => `<button class="part-block ${state.selected===part.id?"selected":""} ${state.placed[part.id]?"placed":""}" data-part="${part.id}" ${state.placed[part.id]||state.answered?"disabled":""}><span class="${componentClass(part.text)}">${part.text}</span><small>PART</small></button>`).join("")}
     </div></div>
-    ${state.completed?`<div class="completion-overlay" role="dialog" aria-modal="true"><div class="completion-card"><span class="success-kicker">A PERFECT FIT</span><div class="complete-character">${q.character}</div><h2>${q.pinyin}</h2><p>${q.english}</p><p class="question-score">Question score: <strong>${questionScore} / 100</strong></p><p class="completion-message">${q.completionMessage}</p><button class="primary-button" id="next">${state.round===state.order.length-1?"View Results":"Next Character"} <span>→</span></button></div></div>`:""}
+    ${state.completed?`<div class="completion-overlay" role="dialog" aria-modal="true"><div class="completion-card ${state.outcome==="wrong"?"wrong-answer":""}"><span class="success-kicker">${state.outcome==="correct"?"A PERFECT FIT":"CORRECT ANSWER"}</span><div class="complete-character">${q.character}</div><h2>${q.pinyin}</h2><p>${q.english}</p><div class="answer-parts" aria-label="Correct component order">${correctAnswer.map(part=>`<span class="${componentClass(part.text)}">${part.text}</span>`).join("<i>＋</i>")}</div><p class="question-score">${state.outcome==="correct"?`+${state.lastPoints} points`:`0 points`} · <strong>Total ${state.score} / 100</strong></p><p class="completion-message">${state.outcome==="correct"?q.completionMessage:"Study the correct positions before continuing."}</p><button class="primary-button" id="next">${state.round===state.order.length-1?"View Results":"Next Character"} <span>→</span></button></div></div>`:""}
   </section>`;
 }
 
 function renderResult() {
-  app.innerHTML = `<section class="screen result-screen"><img class="result-plant-art" src="assets/illustrations/plant.png" alt=""><div class="result-medallion"><span>DONE</span><strong>${state.score}</strong><small>TOTAL SCORE</small></div><p class="eyebrow">ROUND COMPLETE</p><h2>You completed the round!</h2><p class="result-copy">You built all ${state.order.length} characters with ${state.mistakes} incorrect ${state.mistakes===1?"try":"tries"}. Every careful look helps you see character structure more clearly.</p><div class="result-stats"><div><strong>${state.order.length}</strong><span>Characters</span></div><div><strong>${state.mistakes}</strong><span>Incorrect tries</span></div><div><strong>${Math.round(state.score/state.order.length)}</strong><span>Average score</span></div></div><div class="hero-actions"><button class="primary-button" id="start">New Round <span>↻</span></button><button class="text-button" id="back">Return Home</button></div></section>`;
+  app.innerHTML = `<section class="screen result-screen"><img class="result-plant-art" src="assets/illustrations/plant.png" alt=""><div class="result-medallion"><span>DONE</span><strong>${state.score}</strong><small>OUT OF 100</small></div><p class="eyebrow">ROUND COMPLETE</p><h2>You completed the round!</h2><p class="result-copy">You answered ${state.correct} of ${state.order.length} characters correctly. Review each revealed structure and try for an even stronger join next round.</p><div class="result-stats"><div><strong>${state.order.length}</strong><span>Questions</span></div><div><strong>${state.correct}</strong><span>Correct</span></div><div><strong>${state.mistakes}</strong><span>Incorrect</span></div></div><div class="hero-actions"><button class="primary-button" id="start">New Round <span>↻</span></button><button class="text-button" id="back">Return Home</button></div></section>`;
 }
 
 function bind() {
@@ -230,18 +254,19 @@ function bind() {
   document.getElementById("howto")?.addEventListener("click", () => setScreen("howto"));
   document.getElementById("back")?.addEventListener("click", headerHome);
   document.getElementById("next")?.addEventListener("click", nextQuestion);
-  document.querySelectorAll(".joinery-slot").forEach(slot => slot.addEventListener("click", () => state.selected && tryPlace(state.selected, slot.dataset.slot)));
+  document.getElementById("showAnswer")?.addEventListener("click", revealCorrectAnswer);
+  document.querySelectorAll(".joinery-slot").forEach(slot => slot.addEventListener("click", () => !state.answered && state.selected && tryPlace(state.selected, slot.dataset.slot)));
   document.querySelectorAll(".part-block").forEach(block => {
-    block.addEventListener("click", () => { if (!state.placed[block.dataset.part]) { state.selected=block.dataset.part; render(); } });
+    block.addEventListener("click", () => { if (!state.answered && !state.placed[block.dataset.part]) { state.selected=block.dataset.part; render(); } });
     block.addEventListener("pointerdown", event => {
-      if (state.placed[block.dataset.part]) return;
+      if (state.answered || state.placed[block.dataset.part]) return;
       event.preventDefault(); block.setPointerCapture(event.pointerId);
       state.selected=block.dataset.part; state.drag={id:block.dataset.part,pointer:event.pointerId,x:event.clientX,y:event.clientY,element:block};
       block.classList.add("dragging");
     });
     block.addEventListener("pointermove", event => {
       const drag=state.drag; if (!drag || drag.pointer!==event.pointerId) return;
-      drag.element.style.transform=`translate3d(${event.clientX-drag.x}px,${event.clientY-drag.y}px,0) rotate(-2deg) scale(1.04)`;
+      drag.element.style.transform=`translate3d(${event.clientX-drag.x}px,${event.clientY-drag.y}px,0) rotate(-2deg) scale(1.1)`;
       document.querySelectorAll(".joinery-slot").forEach(slot => { const r=slot.getBoundingClientRect(); slot.classList.toggle("slot-near",event.clientX>=r.left-24&&event.clientX<=r.right+24&&event.clientY>=r.top-24&&event.clientY<=r.bottom+24); });
     });
     const end = event => {
